@@ -1,14 +1,49 @@
 import uuid
-"""
-"""
+import os
+
+UPTODATE=-2
 
 
+def inputsNewer(job):
+    """Checks if any inputs are newer than any outputs
+
+    inputs: list of file names
+    outputs: list of file names
+
+    Returns: True if the job is up-to-date
+
+    If there are no outputs, the default behavior is to rerun the job.
+    If there are no inputs, the job is rerun if the outputs do not
+    all exist.  If there are both inputs and outputs, then dates are
+    checked.  If that fails for any reason, the job is rerun.  
+    """
+    if(len(job.outputs)==0):
+        return False
+    if(len(job.inputs)==0):
+        for f in job.outputs:
+            if(not os.path.exists(f)):
+                return False
+        return True            
+    try:
+        newestInput = max(os.stat(x).st_mtime for x in job.inputs)
+        try:
+            oldestOutput = min(os.stat(x).st_mtime for x in job.outputs)
+            return (newestInput<oldestOutput)
+        except OSError:
+            return False
+        return False
+    except ValueError:
+        return False
+    finally:
+        print "Looks like an input was not satisfied for this job"
+        raise
+        
 # Note: Can probably do the entire workflow thing using just Job class variables?
 
 class Job(object):
     """Encapsulates a Job."""
     def __init__(self,command,nodes,params,name=None,dependencies=[],
-                 inputs=[],outputs=[],uptodate=False):
+                 inputs=[],outputs=[],uptodate=inputsNewer):
         self.inputs=inputs
         self.outputs=outputs
         self.nodes=nodes
@@ -16,6 +51,7 @@ class Job(object):
         self.command=command
         self._uuid = uuid.uuid4()
         self.name=name
+        self._uptodateFcn = uptodate
         self.dependencies=dependencies
 
     def addDependencies(self,dependencies):
@@ -30,10 +66,13 @@ class Job(object):
         name="J"+str(self._uuid)[:10]
         if(self.name is not None):
             name=self.name
+        if(self._uptodateFcn(self)):
+            return UPTODATE
         import helix
         j = helix.QSub(command=self.command)
         (so,se) = j.submit(jobname=name,nodes=self.nodes,params=self.params)
-        return so.strip(),se        
+        return so.strip(),se
+        
 
 class Workflow(object):
     """Holds a bunch of jobs and deals with submitting with dependencies
