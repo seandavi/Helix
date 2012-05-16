@@ -1,5 +1,8 @@
 import uuid
 import os
+import sqlite3
+import hashlib
+
 
 UPTODATE=-2
 
@@ -25,7 +28,11 @@ def inputsNewer(job):
                 return False
         return True            
     try:
-        newestInput = max(os.stat(x).st_mtime for x in job.inputs)
+        try:
+            newestInput = max(os.stat(x).st_mtime for x in job.inputs)
+        except OSError:
+            print "Looks like an input was not satisfied for this job"
+            raise
         try:
             oldestOutput = min(os.stat(x).st_mtime for x in job.outputs)
             return (newestInput<oldestOutput)
@@ -34,9 +41,8 @@ def inputsNewer(job):
         return False
     except ValueError:
         return False
-    finally:
-        print "Looks like an input was not satisfied for this job"
-        raise
+    print "should not be here"
+    raise Exception
         
 # Note: Can probably do the entire workflow thing using just Job class variables?
 
@@ -94,12 +100,13 @@ class Workflow(object):
     
     submitLog = {}
     
-    def __init__(self,jobs=[]):
+    def __init__(self,jobs=[],jobdb='~/.jobdb'):
         self.jobs=set()
         for job in jobs:
             self.jobs.append(job)
         self._subJobs = {}
-            
+        self._jobdb=os.path.expanduser(jobdb)
+
     def addJobs(self,jobs):
         """Add more jobs to the workflow"""
         for job in jobs:
@@ -123,13 +130,19 @@ class Workflow(object):
         if(job in self.submitLog):
             return [self.submitLog[job]]
         else:
-            self.submitLog[job]=job.submit()[0]
+            self.submitLog[job]=job.submit()
+            with open(self._jobdb,'a') as f:
+                f.write("%s\t%s\t%s\n" %(str(self.submitLog[job]),str(job.name),
+                                         hashlib.sha512(job.command).hexdigest()))
             return [self.submitLog[job]]
     
     def _recursiveSubmit(self,job,deps=set()):
         """Recursively submit a job and all its dependencies"""
         if(len(job.dependencies)==0):
-            return(self._submit(job))
+            res = self._submit(job)
+            if(len(res)==1 and res==UPTODATE):
+                return(set())
+            return(res)
         else:
             mydeps = set()
             for i in job.dependencies:
