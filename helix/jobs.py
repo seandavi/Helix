@@ -1,8 +1,6 @@
 import uuid
 import os
-import sqlite3
-import hashlib
-
+import utils
 
 UPTODATE=-2
 
@@ -48,28 +46,42 @@ def inputsNewer(job):
 
 class Job(object):
     """Encapsulates a Job."""
-    def __init__(self,command,nodes,params,name=None,dependencies=[],
+    def __init__(self,command,nodes='1',params='',name=None,
                  inputs=[],outputs=[],uptodate=inputsNewer):
         self.inputs=inputs
         self.outputs=outputs
         self.nodes=nodes
         self.params=params
         self.command=command
-        self._uuid = uuid.uuid4()
         self.name=name
         self._uptodateFcn = uptodate
-        self.dependencies=dependencies
+        self.dependencies=set()
+        self.dependsOnMe=set()
 
-    def addDependencies(self,dependencies):
+    def addDependency(self,dependency):
         """Add dependencies to the job"""
-        self.dependencies=self.dependencies+dependencies
+        if(not isinstance(dependency,Job)):
+            raise Exception("addDependency takes as input a single Job (or subclass)")
+        self.dependencies.add(dependency)
+        dependency.dependsOnMe.add(self)
 
     def __repr__(self):
-        return "<Job name=%s id=%s command=%s>" % (self.name,str(self._uuid),self.command)
+        return "<Job name=%s>" % (self.name)
 
+
+    def hashString(self):
+        """
+        Return a sha512 hexdigest of the command string after all whitespace is stripped
+
+        This is meant to be a unique ID for the command line to be submitted.
+        """
+        return utils.hashString(self.command)
+    
     def submit(self):
-        """Submit the job to the queue using helix QSub"""
-        name="J"+str(self._uuid)[:10]
+        """
+        Submit the job to the queue using helix QSub
+        """
+        name=self.hashString()[0:10]
         if(self.name is not None):
             name=self.name
         if(self._uptodateFcn(self)):
@@ -107,19 +119,33 @@ class Workflow(object):
         self._subJobs = {}
         self._jobdb=os.path.expanduser(jobdb)
 
-    def addJobs(self,jobs):
+    def addJob(self,job):
         """Add more jobs to the workflow"""
-        for job in jobs:
-            self.jobs.add(job)
+        if(not isinstance(job,Job)):
+            raise Exception("Argument to addJob must be a Job (or subclass), got %s" % str(job))
+        self.jobs.add(job)
+
+    def getJobsWithNoDependencies(self):
+        return set([job for job in self.jobs if len(job.dependencies)==0])
+
+    def getJobsWithNoDependsOnMe(self):
+        return set([job for job in self.jobs if len(job.dependsOnMe)==0])
         
-    def getAllDependencies(self,job,deps=[]):
-        """Simply return all the dependencies (recursively) of a given job"""
+    def _getAllDependencies(self,job,deps):
         if(len(job.dependencies)==0):
             return(deps)
         else:
             for i in job.dependencies:
-                deps = [i] + self.getAllDependencies(i,deps)
+                deps.update(self._getAllDependencies(i,deps))
+            for i in job.dependencies:
+                deps.add(i)
             return deps
+            
+    def getAllDependencies(self,job):
+        """Simply return all the dependencies (recursively) of a given job"""
+        # must set the initial deps to the empty set, then do recursion
+        return(self._getAllDependencies(job,deps=set()))
+
 
     def _submit(self,job,deps=set()):
         """Submit the given job
@@ -133,7 +159,7 @@ class Workflow(object):
             self.submitLog[job]=job.submit()
             with open(self._jobdb,'a') as f:
                 f.write("%s\t%s\t%s\n" %(str(self.submitLog[job]),str(job.name),
-                                         hashlib.sha512(job.command).hexdigest()))
+                                         utils.hashString(job.command)))
             return [self.submitLog[job]]
     
     def _recursiveSubmit(self,job,deps=set()):
@@ -158,13 +184,20 @@ class Workflow(object):
         print self.submitLog
             
 if __name__=="__main__":
-    a = Job(command='hostname',name='a',nodes='1:c2',params='')
-    b = Job(command='hostname',name='b',nodes='1:c2',params='')
-    c = Job(command='hostname',name='c',nodes='1:c2',params='')
-    d = Job(command='hostname',name='d',nodes='1:c2',params='')
+    a = Job(command='hostname',name='a')
+    b = Job(command='hostname',name='b')
+    c = Job(command='hostname',name='c')
+    d = Job(command='hostname',name='d')
     wf = Workflow()
-    wf.addJobs([a,b,c,d])
-    c.addDependencies([a,b])
-    d.addDependencies([c])
-    #print wf.getAllDependencies(d)
-    wf.submit()
+    for job in [a,b,c,d]:
+        wf.addJob(job)
+    c.addDependency(a)
+    c.addDependency(b)
+    d.addDependency(c)
+    print "a",wf.getAllDependencies(a)
+    print "d",wf.getAllDependencies(d)
+    print "a",wf.getAllDependencies(a)
+    print "c",wf.getAllDependencies(c)
+    print wf.getJobsWithNoDependencies()
+    print wf.getJobsWithNoDependsOnMe()
+    #wf.submit()
