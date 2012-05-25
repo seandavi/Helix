@@ -1,6 +1,7 @@
 import uuid
 import os
 import utils
+import time
 
 UPTODATE=-2
 
@@ -175,9 +176,10 @@ class Workflow(object):
                 mydeps.update(self._recursiveSubmit(i,deps))
             return(self._submit(job,mydeps))
 
-    def submit(self):
+    def submit(self,sleep=2):
         """Submit all the jobs in the workflow to Biowulf"""
         for job in self.jobs:
+            time.sleep(sleep)
             print "submitting job %s" % str(job)
             self._recursiveSubmit(job)
         
