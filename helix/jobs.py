@@ -25,23 +25,44 @@ def inputsNewer(job):
         for f in job.outputs:
             if(not os.path.exists(f)):
                 return False
-        return True            
+        return True
+    # check if inputs are available at all:
+    wf = Workflow()
+    deps = wf.getAllDependencies(job)
+    outputs = set()
+    for j in deps:
+        if(isinstance(j.outputs,list)):
+            for ofile in j.outputs:
+                outputs.add(ofile)
+        else:
+            outputs.add(ofile)
+    availableInputsFromDependencies=outputs
+    newestInput=None
+    runagain=False
+    inputs = [job.inputs]
+    if(isinstance(job.inputs,list)):
+        inputs=job.inputs
+    for x in inputs:
+        if(os.path.exists(x)):
+            st_mtime = os.stat(x).st_mtime
+            if(st_mtime>newestInput):
+                newestInput=st_mtime
+        else:
+            if(x not in availableInputsFromDependencies):
+                print availableInputsFromDependencies,x
+                raise OSError("Looks like an input was not satisfied for this job %s" % str(job))
+            runagain = True
+    if(runagain):
+        return False
     try:
-        try:
-            newestInput = max(os.stat(x).st_mtime for x in job.inputs)
-        except OSError:
-            print "Looks like an input was not satisfied for this job"
-            raise
-        try:
-            oldestOutput = min(os.stat(x).st_mtime for x in job.outputs)
-            return (newestInput<oldestOutput)
-        except OSError:
-            return False
+        oldestOutput=None
+        if(isinstance(job.outputs,list)):
+            oldestOutput = max(os.stat(x).st_mtime for x in job.outputs)
+        else:
+            oldestOutput = os.stat(job.outputs).st_mtime
+        return (newestInput<oldestOutput)
+    except OSError:
         return False
-    except ValueError:
-        return False
-    print "should not be here"
-    raise Exception
         
 # Note: Can probably do the entire workflow thing using just Job class variables?
 
@@ -127,9 +148,15 @@ class Workflow(object):
         self.jobs.add(job)
 
     def getJobsWithNoDependencies(self):
+        """
+        Return set of jobs that have no dependencies
+        """
         return set([job for job in self.jobs if len(job.dependencies)==0])
 
     def getJobsWithNoDependsOnMe(self):
+        """
+        Return the set of jobs that have no parents (top-level jobs)
+        """
         return set([job for job in self.jobs if len(job.dependsOnMe)==0])
         
     def _getAllDependencies(self,job,deps):
@@ -153,11 +180,17 @@ class Workflow(object):
 
         Returns the biowulf job id of the submitted job"""
         if(len(deps)>0):
+            print deps
             job.params='-W depend=afterany:%s' % (":".join(deps))
         if(job in self.submitLog):
             return [self.submitLog[job]]
         else:
-            self.submitLog[job]=job.submit()
+            if(len(deps)==0):
+                job.uptodate=False
+            tmp = job.submit()
+            if(tmp==UPTODATE):
+                return(set())
+            self.submitLog[job]=tmp[0]
             with open(self._jobdb,'a') as f:
                 f.write("%s\t%s\t%s\n" %(str(self.submitLog[job]),str(job.name),
                                          utils.hashString(job.command)))
